@@ -517,32 +517,34 @@ def _retrieve_tle(norad_id):
     return None
 
 
+
 def download_satellites(
     target_ids=None,
     targets_path=TARGETS_PATH,
     cache_path=CACHE_PATH,
+    refresh=False,
 ):
-    """Download or load TLEs for all requested satellites.
+    """Load cached TLEs immediately or refresh them from online sources.
 
-    Returns only satellites with usable TLE data.
-    Unavailable satellites are represented with provenance records
-    in the returned list so the dashboard can report them explicitly.
+    Normal startup:
+        1. Use local cached TLEs immediately.
+        2. Download online only for satellites missing from the cache.
+
+    Manual refresh:
+        1. Try CelesTrak.
+        2. Fall back to SatNOGS.
+        3. Reuse cached TLEs if both sources fail.
     """
     if target_ids is None:
-        target_ids = read_target_ids(
-            targets_path
-        )
+        target_ids = read_target_ids(targets_path)
 
-    target_ids = [
-        int(value)
-        for value in target_ids
-    ]
+    target_ids = [int(value) for value in target_ids]
 
     cache = _load_cache(cache_path)
 
     satellites = []
-
     fresh_records = {}
+
     source_counts = {
         "FRESH": 0,
         "CACHED": 0,
@@ -551,9 +553,16 @@ def download_satellites(
     }
 
     for norad_id in target_ids:
-        retrieved = _retrieve_tle(
-            norad_id
-        )
+        cached = cache.get(norad_id)
+
+        # Normal startup: use existing cache immediately.
+        if cached is not None and not refresh:
+            satellites.append(_cached_record(cached))
+            source_counts["CACHED"] += 1
+            continue
+
+        # Refresh requested, or no cached record exists.
+        retrieved = _retrieve_tle(norad_id)
 
         if retrieved is not None:
             fresh_records[norad_id] = {
@@ -566,85 +575,43 @@ def download_satellites(
                 )
             }
 
-            satellites.append(
-                retrieved
-            )
-
-            source_counts[
-                retrieved["tle_source_status"]
-            ] += 1
-
+            satellites.append(retrieved)
+            source_counts["FRESH"] += 1
             continue
 
-        # --------------------------------------------------------------
-        # 3. Local cache fallback
-        # --------------------------------------------------------------
-        cached = cache.get(norad_id)
-
+        # Online sources failed: use the existing cache.
         if cached is not None:
-            print(
-                f"ℹ️ Using cached TLE for "
-                f"NORAD {norad_id}."
-            )
-
-            cached_result = _cached_record(
-                cached
-            )
-
-            satellites.append(
-                cached_result
-            )
-
+            satellites.append(_cached_record(cached))
             source_counts["CACHED"] += 1
-
             continue
 
-        # --------------------------------------------------------------
-        # 4. No usable TLE
-        # --------------------------------------------------------------
-            message = (
-            "No usable TLE was available "
-            "from CelesTrak, SatNOGS, "
-            "or the local cache."
-        )
-
-        unavailable = _unavailable_record(
-            norad_id,
-            message,
+        # Neither online sources nor local cache had usable data.
+        message = (
+            "No usable TLE was available from CelesTrak, "
+            "SatNOGS, or the local cache."
         )
 
         satellites.append(
-            unavailable
+            _unavailable_record(norad_id, message)
         )
-
         source_counts["UNAVAILABLE"] += 1
 
-        print(
-            f"❌ NORAD {norad_id}: "
-            f"No usable TLE is available."
-        )
-
-    # Only valid newly retrieved TLEs are merged into the cache.
-    #
-    # Existing cached records are preserved, including records for
-    # targets that could not be refreshed.
+    # Preserve existing records and update only successful downloads.
     merged_cache = dict(cache)
     merged_cache.update(fresh_records)
 
     if fresh_records:
-        _write_cache(
-            merged_cache,
-            cache_path,
-        )
+        _write_cache(merged_cache, cache_path)
 
     print(
-        "ℹ️ TLE source summary: "
+        "OrbitGuard TLE summary: "
         f"{source_counts['FRESH']} fresh, "
         f"{source_counts['CACHED']} cached, "
         f"{source_counts['UNAVAILABLE']} unavailable."
     )
 
     return satellites
+
 
 
 if __name__ == "__main__":

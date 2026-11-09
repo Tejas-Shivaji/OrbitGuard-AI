@@ -1,63 +1,44 @@
-from src.data.tle_downloader import download_satellites
-from src.orbit.propagation import get_satellite_position
-from src.risk.conjunction import screen_all_pairs
+from datetime import datetime, timezone
+
+import src.risk.conjunction as conjunction
 
 
-satellites = download_satellites(
-    "data/targets.txt"
-)
+def test_screen_all_pairs_returns_each_unique_pair(monkeypatch):
+    start = datetime(2026, 11, 9, 12, 0, tzinfo=timezone.utc)
+    satellites = [
+        {"name": "TEST-A", "norad_id": 1, "line1": "1 A", "line2": "2 A"},
+        {"name": "TEST-B", "norad_id": 2, "line1": "1 B", "line2": "2 B"},
+        {"name": "TEST-C", "norad_id": 3, "line1": "1 C", "line2": "2 C"},
+    ]
 
+    def fake_position(name, line1, line2, calculation_time):
+        index = ord(name[-1]) - ord("A")
+        return {
+            "name": name,
+            "x_km": float(index * 100),
+            "y_km": 0.0,
+            "z_km": 0.0,
+            "velocity_x_km_s": 1.0,
+            "velocity_y_km_s": 0.0,
+            "velocity_z_km_s": 0.0,
+        }
 
-print("\n🛰️ ORBITGUARD AI — CONJUNCTION SCREENING")
-print("=" * 70)
+    monkeypatch.setattr(conjunction, "get_satellite_position", fake_position)
 
-
-results = screen_all_pairs(
-    get_satellite_position,
-    satellites,
-    minutes=180,
-    step_seconds=60
-)
-
-
-print("\n📊 CLOSEST APPROACHES")
-print("=" * 70)
-
-
-for result in results:
-
-    print(
-        f"\n{result['satellite_a']} "
-        f"↔ "
-        f"{result['satellite_b']}"
+    results = conjunction.screen_all_pairs(
+        satellites,
+        start_time=start,
+        minutes=0,
+        step_seconds=60,
     )
 
-    print(
-        f"Minimum separation: "
-        f"{result['closest_distance_km']:.3f} km"
-    )
-
-    print(
-        f"Relative velocity: "
-        f"{result['relative_velocity_km_s']:.3f} km/s"
-    )
-
-    print(
-        f"Time to TCA: "
-        f"{result['time_to_tca_minutes']:.1f} minutes"
-    )
-
-    if result["tca_at_boundary"]:
-        print("⚠️ TCA: Outside current search window")
-    else:
-        print("✅ TCA: Within search window")
-
-    print(
-        f"Time: "
-        f"{result['closest_time']}"
-    )
-
-    print(
-        f"Risk: "
-        f"{result['risk']}"
-    )
+    assert len(results) == 3
+    assert {
+        frozenset((result["satellite_a"], result["satellite_b"]))
+        for result in results
+    } == {
+        frozenset(("TEST-A", "TEST-B")),
+        frozenset(("TEST-A", "TEST-C")),
+        frozenset(("TEST-B", "TEST-C")),
+    }
+    assert all("indian_asset_involved" in result for result in results)

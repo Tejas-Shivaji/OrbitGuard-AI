@@ -1,33 +1,20 @@
-from src.data.tle_downloader import download_satellites
-from src.orbit.propagation import get_satellite_position
+from pathlib import Path
+
+from src.data.tle_downloader import download_satellites, read_target_ids
 
 
-satellites = download_satellites("data/targets.txt")
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
-print("\n🛰️ ORBITGUARD AI — MULTI-SATELLITE PROPAGATION")
-print("=" * 65)
-
-
-for satellite in satellites:
-
-    result = get_satellite_position(
-        satellite["name"],
-        satellite["line1"],
-        satellite["line2"]
+def test_all_configured_satellites_load_from_local_cache():
+    target_ids = read_target_ids(PROJECT_ROOT / "data" / "targets.txt")
+    satellites = download_satellites(
+        target_ids=target_ids,
+        cache_path=str(PROJECT_ROOT / "data" / "tle_cache.txt"),
+        refresh=False,
     )
 
-    print(f"\nSatellite: {result['name']}")
-    print(
-        f"Position: "
-        f"({result['x_km']:.2f}, "
-        f"{result['y_km']:.2f}, "
-        f"{result['z_km']:.2f}) km"
-    )
-
-    print(
-        f"Velocity: "
-        f"({result['velocity_x_km_s']:.2f}, "
-        f"{result['velocity_y_km_s']:.2f}, "
-        f"{result['velocity_z_km_s']:.2f}) km/s"
-    )
+    assert len(satellites) == len(target_ids)
+    assert all(satellite["tle_source_status"] == "CACHED" for satellite in satellites)
+    assert all(satellite["line1"].startswith("1 ") for satellite in satellites)
+    assert all(satellite["line2"].startswith("2 ") for satellite in satellites)

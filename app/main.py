@@ -3,6 +3,8 @@ import sys
 import math
 import time
 import json
+import hashlib
+import base64
 from datetime import datetime, timezone, timedelta
 
 import numpy as np
@@ -45,7 +47,6 @@ from src.risk.tle_health import build_satellite_health
 
 st.set_page_config(
     page_title="OrbitGuard AI",
-    page_icon="🛰️",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -89,51 +90,549 @@ def load_recent_screening_audits(limit=10):
     return records
 
 # ============================================================
-# LIGHT UI POLISH
+# USER-PROVIDED GALAXY VIDEO BACKDROP
+# ============================================================
+
+# The supplied galaxy clip is bundled locally. It is decorative only; all
+# satellite positions, screening results and charts continue to use TLE/SGP4.
+GALAXY_VIDEO_PATH = os.path.join(PROJECT_ROOT, "assets", "galaxy_background.mp4")
+
+if os.path.isfile(GALAXY_VIDEO_PATH):
+    with open(GALAXY_VIDEO_PATH, "rb") as galaxy_file:
+        galaxy_video_b64 = base64.b64encode(galaxy_file.read()).decode("ascii")
+
+    st.markdown(
+        f"""
+        <div class="og-video-backdrop" aria-hidden="true">
+          <video autoplay muted loop playsinline preload="auto"
+                 disablepictureinpicture>
+            <source src="data:video/mp4;base64,{galaxy_video_b64}" type="video/mp4">
+          </video>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+else:
+    st.warning("Galaxy background video is missing: assets/galaxy_background.mp4")
+
+# ============================================================
+# ORBITGUARD HYBRID AEROSPACE DESIGN SYSTEM
 # ============================================================
 
 st.markdown(
     """
     <style>
+        :root {
+            --og-ink: #07111d;
+            --og-ink-2: #0b1b2b;
+            --og-panel: #102638;
+            --og-panel-light: #d9f0ef;
+            --og-cyan: #72d8d0;
+            --og-cyan-bright: #9cf3e8;
+            --og-yellow: #eaff43;
+            --og-paper: #eaf5f4;
+            --og-muted: #9cb4c4;
+            --og-line: rgba(151, 198, 207, .20);
+        }
+
+        .stApp {
+            background: transparent;
+            color: var(--og-paper);
+        }
+        /* Keep the live Earth footage behind every Streamlit surface. */
+        .og-video-backdrop {
+            position: fixed;
+            inset: 0;
+            width: 100vw;
+            height: 100vh;
+            overflow: hidden;
+            z-index: 0;
+            pointer-events: none;
+            background: #05070b;
+        }
+        .og-video-backdrop video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            display: block;
+            opacity: .72;
+            filter: grayscale(1) contrast(1.12) brightness(.92);
+        }
+        .og-video-backdrop video::-webkit-media-controls {
+            display: none !important;
+        }
+        .og-video-backdrop:after {
+            content: "";
+            position: absolute;
+            inset: 0;
+            background:
+                linear-gradient(90deg, rgba(4,10,18,.34), rgba(4,10,18,.12) 50%, rgba(4,10,18,.38)),
+                linear-gradient(180deg, rgba(4,10,18,.24), rgba(4,10,18,.52));
+        }
+        /* OrbitGuard sidebar information boxes */
+        .og-sidebar-note {
+            padding: 12px;
+            margin: 8px 0;
+            border-radius: 9px;
+            background: #dceef7;
+            border: 1px solid #8bbbd3;
+            color: #102a3a !important;
+            font-size: 13px;
+            font-weight: 600;
+            line-height: 1.6;
+        }
+
+        .og-sidebar-note.og-status {
+            background: #e4f0dc;
+            border-color: #a5c58d;
+            color: #19351b !important;
+        }
+
+        .og-sidebar-note p,
+        .og-sidebar-note span,
+        .og-sidebar-note strong {
+            color: inherit !important;
+        }
+        [data-testid="stAppViewContainer"] { background: transparent; }
+        [data-testid="stMain"] { position: relative; z-index: 1; background: transparent; }
+        [data-testid="stSidebar"] { z-index: 2; }
+
+        [data-testid="stHeader"] {
+            background: rgba(5, 14, 25, .42);
+        }
+
         .block-container {
-            padding-top: 1.2rem;
-            padding-bottom: 2rem;
+            max-width: 1680px;
+            padding: 2rem clamp(1rem, 3vw, 3rem) 3.5rem;
         }
 
-        [data-testid="stMetric"] {
-            background: rgba(25, 29, 38, 0.75);
-            border: 1px solid rgba(120, 130, 150, 0.18);
-            border-radius: 12px;
-            padding: 12px 14px;
+        h1, h2, h3, h4 {
+            color: #f1fbfa !important;
+            letter-spacing: -.035em;
+        }
+        h1 { font-weight: 850 !important; }
+        h2, h3 { font-weight: 750 !important; }
+        p, label, [data-testid="stMarkdownContainer"] {
+            color: #c4d8df;
         }
 
-        .orbitguard-card {
-            background: linear-gradient(
-                135deg,
-                rgba(24, 29, 40, 0.95),
-                rgba(15, 18, 26, 0.95)
-            );
-            border: 1px solid rgba(120, 130, 150, 0.18);
+        /* Hero header */
+        .og-hero {
+            position: relative;
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 2rem;
+            padding: 2.65rem 1.8rem 2.15rem;
+            margin: 1.1rem 0 1.6rem;
+            overflow: hidden;
+            border: 1px solid rgba(114, 216, 208, .23);
+            border-radius: 20px;
+            background: linear-gradient(112deg, rgba(8, 25, 40, .82), rgba(8, 25, 40, .64) 64%, rgba(20, 48, 57, .72));
+            backdrop-filter: blur(16px);
+            box-shadow: 0 22px 60px rgba(0, 0, 0, .22);
+        }
+        .og-hero:after {
+            content: "";
+            position: absolute;
+            width: 290px; height: 290px;
+            right: 17%; top: -220px;
+            border: 1px solid rgba(156, 243, 232, .22);
+            border-radius: 50%;
+            box-shadow: 0 0 0 28px rgba(156,243,232,.025), 0 0 0 58px rgba(156,243,232,.02);
+            pointer-events: none;
+        }
+        .og-eyebrow, .og-kicker {
+            color: var(--og-cyan) !important;
+            font-size: .69rem;
+            font-weight: 800;
+            letter-spacing: .19em;
+            text-transform: uppercase;
+        }
+        .og-brand {
+            color: #f3fbfa;
+            font-size: clamp(2rem, 4vw, 3.25rem);
+            line-height: 1;
+            font-weight: 900;
+            letter-spacing: -.065em;
+            margin: .55rem 0 .8rem;
+        }
+        .og-brand span { color: var(--og-yellow); }
+        .og-subtitle {
+            max-width: 700px;
+            color: #b7ccd5;
+            font-size: .94rem;
+            line-height: 1.65;
+        }
+        .og-tagline {
+            margin-top: 1rem;
+            color: #e9f5f3;
+            font-size: .76rem;
+            font-weight: 750;
+            letter-spacing: .12em;
+            text-transform: uppercase;
+        }
+        .og-status-wrap {
+            min-width: 225px;
+            margin-top: 4.1rem;
+            padding: 1.15rem 1.2rem;
+            border: 1px solid rgba(234, 255, 67, .4);
             border-radius: 14px;
-            padding: 16px 18px;
-            margin-bottom: 10px;
+            background: linear-gradient(145deg, rgba(217,240,239,.12), rgba(217,240,239,.045));
+            box-shadow: inset 3px 0 0 var(--og-yellow);
         }
-
-        .orbitguard-label {
-            color: #9aa4b2;
-            font-size: 0.82rem;
-            margin-bottom: 4px;
+        .og-status-label {
+            color: #a9c3ca;
+            font-size: .66rem;
+            font-weight: 800;
+            letter-spacing: .18em;
         }
-
-        .orbitguard-value {
-            color: #f4f7fb;
+        .og-status-value {
+            color: var(--og-yellow);
             font-size: 1.45rem;
-            font-weight: 700;
+            font-weight: 900;
+            letter-spacing: .06em;
+            margin: .25rem 0;
+        }
+        .og-status-detail { color: #b8ced4; font-size: .72rem; }
+
+        /* KPI and reusable panels */
+        [data-testid="stMetric"] {
+            min-height: 112px;
+            padding: 1rem 1.1rem;
+            border: 1px solid var(--og-line);
+            border-radius: 14px;
+            background: linear-gradient(145deg, rgba(19, 48, 65, .78), rgba(10, 29, 44, .76));
+            backdrop-filter: blur(14px);
+            box-shadow: 0 12px 28px rgba(0,0,0,.14);
+        }
+        [data-testid="stMetricLabel"] {
+            color: #a9c5ce !important;
+            font-size: .68rem !important;
+            font-weight: 800 !important;
+            letter-spacing: .13em;
+            text-transform: uppercase;
+        }
+        [data-testid="stMetricValue"] {
+            color: #f0fbf8 !important;
+            font-weight: 850 !important;
+        }
+        [data-testid="stMetricDelta"] { font-size: .75rem !important; }
+        .orbitguard-card {
+            padding: 1.15rem 1.25rem;
+            margin-bottom: .8rem;
+            border: 1px solid var(--og-line);
+            border-radius: 15px;
+            background: linear-gradient(145deg, rgba(18, 45, 61, .78), rgba(9, 26, 41, .78));
+            backdrop-filter: blur(14px);
+            box-shadow: 0 12px 30px rgba(0,0,0,.17);
+        }
+        .orbitguard-status-card { margin-top: 0; }
+        .orbitguard-label, .og-panel-label {
+            color: #a6c1ca;
+            font-size: .68rem;
+            font-weight: 800;
+            letter-spacing: .16em;
+            text-transform: uppercase;
+            margin-bottom: .4rem;
+        }
+        .orbitguard-value {
+            color: var(--og-yellow);
+            font-size: 1.5rem;
+            font-weight: 900;
+        }
+        .orbitguard-muted { color: #a8c0ca; font-size: .76rem; }
+
+        /* Sidebar and controls */
+        [data-testid="stSidebar"] {
+            background: linear-gradient(180deg, rgba(9, 29, 44, .96) 0%, rgba(5, 17, 29, .97) 100%);
+            backdrop-filter: blur(18px);
+            border-right: 1px solid var(--og-line);
+        }
+        [data-testid="stSidebar"] h1,
+        [data-testid="stSidebar"] h2,
+        [data-testid="stSidebar"] h3 { color: var(--og-cyan) !important; }
+        [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p { color: #b8cbd2; }
+        .stButton > button {
+            min-height: 2.65rem;
+            border: 1px solid rgba(114,216,208,.38);
+            border-radius: 9px;
+            color: #071722;
+            background: var(--og-cyan);
+            font-weight: 800;
+            transition: .18s ease;
+        }
+        .stButton > button:hover {
+            border-color: var(--og-yellow);
+            color: #071722;
+            background: var(--og-yellow);
+            transform: translateY(-1px);
+        }
+        [data-baseweb="select"] > div,
+        [data-baseweb="input"] > div,
+        [data-baseweb="textarea"] > div {
+            border-color: rgba(151,198,207,.28);
+            border-radius: 9px;
+            background: #102638;
+        }
+        [data-testid="stExpander"] {
+            border: 1px solid var(--og-line);
+            border-radius: 12px;
+            background: rgba(14, 35, 51, .68);
+            backdrop-filter: blur(12px);
+        }
+        [data-testid="stDataFrame"] {
+            border: 1px solid var(--og-line);
+            border-radius: 12px;
+            overflow: hidden;
+        }
+        hr { border-color: var(--og-line) !important; }
+        [data-testid="stPlotlyChart"] {
+            border: 1px solid rgba(114,216,208,.18);
+            border-radius: 15px;
+            overflow: hidden;
+            background: rgba(5, 16, 27, .42);
+            backdrop-filter: blur(10px);
+        }
+        [data-testid="stCaptionContainer"] { color: #8faab7; }
+
+        /* ====================================================
+           GALAXY-VIDEO CONTRAST PASS
+           Keep the supplied monochrome galaxy visible while
+           ensuring every dashboard label remains readable.
+           ==================================================== */
+        .og-video-backdrop video {
+            opacity: .78;
+            filter: grayscale(1) contrast(1.08) brightness(.72);
+        }
+        .og-video-backdrop:after {
+            background:
+                linear-gradient(90deg, rgba(1, 4, 9, .76), rgba(1, 4, 9, .62) 50%, rgba(1, 4, 9, .78)),
+                linear-gradient(180deg, rgba(1, 4, 9, .62), rgba(1, 4, 9, .78));
+        }
+        /* Main copy: brighter white, stronger weight and subtle separation. */
+        .stApp,
+        [data-testid="stMain"] {
+            color: #F7FAFF !important;
+        }
+        [data-testid="stMarkdownContainer"],
+        [data-testid="stMarkdownContainer"] p,
+        [data-testid="stMarkdownContainer"] li,
+        [data-testid="stMarkdownContainer"] span,
+        [data-testid="stText"],
+        [data-testid="stWidgetLabel"],
+        [data-testid="stWidgetLabel"] p,
+        label,
+        .stRadio label,
+        .stCheckbox label,
+        .stSelectbox label,
+        .stSlider label,
+        .stMultiSelect label {
+            color: #F1F5FC !important;
+            text-shadow: 0 1px 3px rgba(0, 0, 0, .72);
+        }
+        h1, h2, h3, h4, h5, h6,
+        [data-testid="stMarkdownContainer"] h1,
+        [data-testid="stMarkdownContainer"] h2,
+        [data-testid="stMarkdownContainer"] h3 {
+            color: #FFFFFF !important;
+            text-shadow: 0 2px 8px rgba(0, 0, 0, .78);
+        }
+        [data-testid="stCaptionContainer"],
+        [data-testid="stCaptionContainer"] p,
+        small, .og-subtitle, .og-status-detail,
+        .orbitguard-muted {
+            color: #D5E0EC !important;
+            text-shadow: 0 1px 3px rgba(0, 0, 0, .85);
+        }
+        .og-eyebrow, .og-kicker, .og-status-label,
+        .orbitguard-label, .og-panel-label {
+            color: #9AF4E8 !important;
+            text-shadow: 0 1px 4px rgba(0, 0, 0, .9);
+        }
+        /* More opaque glass surfaces prevent bright galaxy details
+           from passing directly behind important numbers and labels. */
+        .og-hero {
+            background: linear-gradient(112deg, rgba(3, 10, 19, .94), rgba(5, 15, 26, .91) 64%, rgba(7, 22, 31, .93));
+            border-color: rgba(154, 244, 232, .34);
+        }
+        .og-status-wrap,
+        [data-testid="stMetric"],
+        .orbitguard-card {
+            background: linear-gradient(145deg, rgba(5, 15, 26, .94), rgba(7, 19, 31, .93));
+            border-color: rgba(177, 205, 224, .30);
+        }
+        [data-testid="stExpander"],
+        [data-testid="stPlotlyChart"] {
+            background: rgba(4, 12, 21, .90);
+            border-color: rgba(177, 205, 224, .28);
+        }
+        [data-testid="stMetricLabel"] {
+            color: #D8E7F4 !important;
+            text-shadow: none !important;
+        }
+        [data-testid="stMetricValue"] {
+            color: #FFFFFF !important;
+            text-shadow: 0 1px 4px rgba(0, 0, 0, .8);
+        }
+        [data-baseweb="select"] *,
+        [data-baseweb="input"] input,
+        [data-baseweb="textarea"] textarea {
+            color: #FFFFFF !important;
+        }
+        [data-baseweb="select"] > div,
+        [data-baseweb="input"] > div,
+        [data-baseweb="textarea"] > div {
+            background: rgba(5, 15, 26, .96) !important;
+        }
+        [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p,
+        [data-testid="stSidebar"] label {
+            color: #E3ECF5 !important;
+        }
+        /* High-contrast captions over the moving galaxy. */
+        [data-testid="stCaptionContainer"],
+        [data-testid="stCaptionContainer"] *,
+        [data-testid="stSidebar"] [data-testid="stCaptionContainer"],
+        [data-testid="stSidebar"] [data-testid="stCaptionContainer"] * {
+            color: #F2F7FF !important;
+            opacity: 1 !important;
+            font-size: .88rem !important;
+            font-weight: 600 !important;
+            line-height: 1.65 !important;
+            text-shadow: 0 1px 4px rgba(0, 0, 0, .98), 0 0 9px rgba(0, 0, 0, .92) !important;
+        }
+        [data-testid="stSidebar"] [data-testid="stCaptionContainer"] {
+            padding: .45rem .55rem !important;
+            border-radius: 8px !important;
+            background: rgba(2, 8, 15, .72) !important;
+        }
+        [data-testid="stSidebar"] [data-testid="stAlert"] {
+            border: 1px solid rgba(255, 255, 255, .22) !important;
+            border-radius: 11px !important;
+            background: rgba(236, 244, 247, .96) !important;
+            box-shadow: 0 8px 22px rgba(0, 0, 0, .22) !important;
+        }
+        [data-testid="stSidebar"] [data-testid="stAlert"] *,
+        [data-testid="stSidebar"] [data-testid="stAlert"] p,
+        [data-testid="stSidebar"] [data-testid="stAlert"] span {
+            color: #071522 !important;
+            font-weight: 750 !important;
+            text-shadow: none !important;
+        }
+        [data-testid="stSidebar"] [data-testid="stAlert"] svg {
+            color: #071522 !important;
+            fill: #071522 !important;
+        }
+        [data-testid="stSidebar"] [data-testid="stAlert"] button {
+            color: #071522 !important;
         }
 
-        .orbitguard-muted {
-            color: #8e98a8;
-            font-size: 0.82rem;
+        /* Stabilise Streamlit's native sidebar controls without overriding
+           its built-in open/close width and transform animation. */
+        [data-testid="stSidebar"] { z-index: 20 !important; }
+        [data-testid="stSidebarCollapseButton"],
+        [data-testid="stSidebarCollapsedControl"] {
+            z-index: 1002 !important;
+            opacity: 1 !important;
+            visibility: visible !important;
+        }
+        [data-testid="stSidebarCollapseButton"] button,
+        [data-testid="stSidebarCollapsedControl"] button {
+            min-width: 2.6rem !important;
+            min-height: 2.6rem !important;
+            border: 1px solid rgba(154, 244, 232, .42) !important;
+            border-radius: 10px !important;
+            color: #F7FAFF !important;
+            background: rgba(3, 12, 22, .94) !important;
+            box-shadow: 0 4px 18px rgba(0, 0, 0, .42) !important;
+            transition: background-color .15s ease, border-color .15s ease !important;
+        }
+        [data-testid="stSidebarCollapseButton"] button:hover,
+        [data-testid="stSidebarCollapsedControl"] button:hover {
+            background: rgba(14, 43, 57, .98) !important;
+            border-color: #9AF4E8 !important;
+        }
+
+        @media (max-width: 850px) {
+            .block-container { padding: 1rem .8rem 2rem; }
+            .og-hero { flex-direction: column; gap: .75rem; padding: 1.2rem; }
+            .og-status-wrap { width: 100%; min-width: 0; margin-top: .4rem; }
+            .og-video-backdrop video { opacity: .72; }
+        }
+
+        /* Improve Cached TLE information box readability */
+        [data-testid="stSidebar"] [data-testid="stAlert"] {
+            background-color: #dceef7 !important;
+            border: 1px solid #8bbbd3 !important;
+        }
+
+        [data-testid="stSidebar"] [data-testid="stAlert"] p,
+        [data-testid="stSidebar"] [data-testid="stAlert"] div,
+        [data-testid="stSidebar"] [data-testid="stAlert"] span {
+            color: #102a3a !important;
+        }
+
+        .og-sidebar-note {
+            padding: 12px;
+            margin: 8px 0;
+            border-radius: 9px;
+            background: #dceef7;
+            border: 1px solid #8bbbd3;
+            color: #102a3a !important;
+            font-size: 13px;
+            font-weight: 600;
+            line-height: 1.6;
+        }
+
+        .og-sidebar-note.og-status-cache {
+            background: #dceef7;
+            color: #102a3a !important;
+        }
+
+        .og-sidebar-note.og-status-fresh {
+            background: #e4f0dc;
+            color: #19351b !important;
+        }
+
+        .og-sidebar-note.og-status-error {
+            background: #f8dddd;
+            color: #641b1b !important;
+        }
+        
+        /* Screening metric cards */
+        [data-testid="stMetric"] {
+            background: rgba(7, 20, 34, 0.94);
+            border: 1px solid rgba(105, 190, 210, 0.30);
+            border-radius: 14px;
+            padding: 18px 16px;
+            min-height: 112px;
+        }
+
+        [data-testid="stMetricLabel"] {
+            color: #c5d5e2 !important;
+            font-size: 13px !important;
+            font-weight: 600 !important;
+        }
+
+        [data-testid="stMetricValue"] {
+            color: #f3f7ff !important;
+            font-size: 27px !important;
+            font-weight: 750 !important;
+        }
+
+        [data-testid="stMetricDelta"] {
+            color: #71d8d0 !important;
+        }
+
+        /* Make button labels clearly readable */
+        .stButton > button,
+        .stButton > button p,
+        [data-testid="stBaseButton-primary"],
+        [data-testid="stBaseButton-primary"] p {
+            color: #102a3a !important;
+            -webkit-text-fill-color: #102a3a !important;
+            text-shadow: none !important;
+            font-weight: 700 !important;
         }
     </style>
     """,
@@ -141,35 +640,36 @@ st.markdown(
 )
 
 # ============================================================
-# HEADER
+# MISSION HEADER
 # ============================================================
 
-header_left, header_right = st.columns([4, 1])
+header_left, header_right = st.columns([3.7, 1.15], gap="large", vertical_alignment="center")
 
 with header_left:
-    st.title("🛰️ ORBITGUARD AI")
-    st.caption(
-        "Explainable Space Situational Awareness & Conjunction Screening"
-    )
     st.markdown(
         """
-        **Detect. Analyze. Explain. Protect.**
-
-        OrbitGuard AI screens satellite pairs using TLE data,
-        SGP4 orbital propagation, geometric separation analysis,
-        and transparent mission-context intelligence.
-
-        **Data-driven screening • Explainable attention scoring • Reproducible analysis**
-        """
+        <div class="og-hero">
+          <div>
+            <div class="og-eyebrow">SPACE SITUATIONAL AWARENESS / OPERATIONS</div>
+            <div class="og-brand">ORBITGUARD <span>AI</span></div>
+            <div class="og-subtitle">
+              Explainable satellite tracking and conjunction screening powered by
+              TLE data, SGP4 orbital propagation and transparent mission-context analysis.
+            </div>
+            <div class="og-tagline">Detect&nbsp; / &nbsp;Analyze&nbsp; / &nbsp;Explain&nbsp; / &nbsp;Protect</div>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
 
 with header_right:
     st.markdown(
         """
-        <div class="orbitguard-card">
-            <div class="orbitguard-label">SYSTEM MODE</div>
-            <div class="orbitguard-value">SCREENING</div>
-            <div class="orbitguard-muted">TLE + SGP4 + pairwise analysis</div>
+        <div class="og-status-wrap">
+          <div class="og-status-label">SYSTEM MODE</div>
+          <div class="og-status-value">SCREENING</div>
+          <div class="og-status-detail">TLE&nbsp; + &nbsp;SGP4&nbsp; + &nbsp;PAIRWISE ANALYSIS</div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -208,13 +708,14 @@ def load_earth_texture(texture_path, width=300, height=150):
 # ============================================================
 
 @st.cache_data(ttl=900)
-def load_satellite_catalog():
+def load_satellite_catalog(refresh=False):
     return download_satellites(
         targets_path=os.path.join(
             PROJECT_ROOT,
             "data",
             "targets.txt",
-        )
+        ),
+        refresh=refresh,
     )
 
 
@@ -263,6 +764,7 @@ def calculate_trajectory(satellite, start_time, duration_hours, points=120):
     return np.array(x), np.array(y), np.array(z)
 
 
+@st.cache_data(ttl=3600, max_entries=64, show_spinner=False)
 def calculate_distance_timeline(
     satellite_a,
     satellite_b,
@@ -320,22 +822,29 @@ def source_status_counts(satellites):
 
 def format_source_status(status):
     labels = {
-        "FRESH": "🟢 FRESH",
-        "CACHED": "🟡 CACHED",
-        "UNAVAILABLE": "🔴 UNAVAILABLE",
-        "UNKNOWN": "⚪ UNKNOWN",
+        "FRESH": " FRESH",
+        "CACHED": " CACHED",
+        "UNAVAILABLE": " UNAVAILABLE",
+        "UNKNOWN": " UNKNOWN",
     }
-    return labels.get(status, f"⚪ {status}")
+    return labels.get(status, f" {status}")
 
 
 # ============================================================
 # SIDEBAR
 # ============================================================
 
-st.sidebar.markdown("## ⚙️ OrbitGuard Controls")
+st.sidebar.markdown("##  OrbitGuard Controls")
+
+refresh_requested = st.session_state.pop(
+    "orbitguard_refresh_tle_requested",
+    False,
+)
 
 try:
-    satellites = load_satellite_catalog()
+    satellites = load_satellite_catalog(
+        refresh=refresh_requested
+    )
 except Exception as error:
     st.error(f"Unable to load satellite data: {error}")
     st.stop()
@@ -344,36 +853,50 @@ satellites = enrich_satellite_catalog(satellites)
 
 source_counts = source_status_counts(satellites)
 
-st.sidebar.markdown("### 📡 TLE Source Status")
+st.sidebar.markdown("###  TLE Source Status")
 
 if source_counts["UNAVAILABLE"] > 0:
-    st.sidebar.error(
+    status_message = (
         f"{source_counts['UNAVAILABLE']} TLE record(s) unavailable"
     )
+    status_class = "og-status-error"
+
 elif source_counts["CACHED"] > 0:
-    st.sidebar.warning(
+    status_message = (
         f"{source_counts['CACHED']} TLE record(s) using cache"
     )
+    status_class = "og-status-cache"
+
 else:
-    st.sidebar.success(
+    status_message = (
         f"{source_counts['FRESH']} TLE record(s) freshly loaded"
     )
+    status_class = "og-status-fresh"
 
-st.sidebar.caption(
-    "FRESH = source download succeeded • "
-    "CACHED = source unavailable, local TLE reused"
+st.sidebar.markdown(
+    f'<div class="og-sidebar-note {status_class}">'
+    f'{status_message}</div>',
+    unsafe_allow_html=True,
+)
+
+st.sidebar.markdown(
+    '<div class="og-sidebar-note">'
+    'FRESH = source download succeeded<br>'
+    'CACHED = source unavailable, local TLE reused'
+    '</div>',
+    unsafe_allow_html=True,
 )
 
 satellite_names = [satellite["name"] for satellite in satellites]
 
 selected_satellites = st.sidebar.multiselect(
-    "🛰️ Satellites",
+    " Satellites",
     satellite_names,
     default=satellite_names,
 )
 
 view_mode = st.sidebar.selectbox(
-    "🌍 3D View Mode",
+    " 3D View Mode",
     [
         "Earth Focus (LEO)",
         "Full Orbital Context",
@@ -383,26 +906,32 @@ view_mode = st.sidebar.selectbox(
 )
 
 trajectory_duration = st.sidebar.slider(
-    "🕐 Trajectory Duration (hours)",
+    " Trajectory Duration (hours)",
     min_value=1,
     max_value=24,
     value=6,
 )
 
 indian_only = st.sidebar.checkbox(
-    "🇮🇳 Indian Asset Watchlist",
+    " Indian Asset Watchlist",
     value=False,
     help="Filter the selected satellite list to assets identified by the OrbitGuard Indian satellite catalog.",
 )
 
 st.sidebar.divider()
 
-if st.sidebar.button("🔄 Refresh TLE Data", use_container_width=True):
+if st.sidebar.button(" Refresh TLE Data", use_container_width=True):
     load_satellite_catalog.clear()
+    st.session_state["orbitguard_refresh_tle_requested"] = True
+    st.session_state.pop("orbitguard_screening_cache", None)
     st.rerun()
 
-st.sidebar.caption(
-    "TLE cache refreshes every 15 minutes during normal use."
+st.sidebar.markdown(
+    '<div class="og-sidebar-note">'
+    'Cached TLE data is used on startup. '
+    'Use Refresh TLE Data to check online sources.'
+    '</div>',
+    unsafe_allow_html=True,
 )
 
 # ============================================================
@@ -471,7 +1000,7 @@ if st.session_state.get("orbitguard_focus_satellite") not in focus_options:
     st.session_state["orbitguard_focus_satellite"] = "Automatic"
 
 focus_satellite_name = st.sidebar.selectbox(
-    "🎯 Focus Satellite",
+    " Focus Satellite",
     focus_options,
     index=0,
     key="orbitguard_focus_satellite",
@@ -483,14 +1012,14 @@ focus_satellite_name = st.sidebar.selectbox(
 # ============================================================
 
 
-st.subheader("🌍 3D Orbital Environment")
+st.subheader(" 3D Orbital Environment")
 
 viz1, viz2, viz3 = st.columns(3)
 
 with viz1:
     animation_enabled = st.checkbox(
-        "▶ Enable orbital animation",
-        value=True,
+        " Enable orbital animation",
+        value=False,
         key="orbitguard_animation_enabled",
     )
 
@@ -570,8 +1099,8 @@ def create_earth(rotation_degrees=0.0):
     try:
         texture, colorscale = load_earth_texture(
             TEXTURE_PATH,
-            width=512,
-            height=256,
+            width=256,
+            height=128,
         )
     except Exception:
         latitude = np.linspace(-np.pi / 2, np.pi / 2, 60)
@@ -752,7 +1281,7 @@ def create_spacecraft_traces(position, is_focus=False):
             color="#E6FCFF" if is_focus else None,
         ),
         name=(
-            f"🎯 {position['name']} spacecraft"
+            f" {position['name']} spacecraft"
             if is_focus
             else f"{position['name']} spacecraft"
         ),
@@ -867,7 +1396,7 @@ for satellite in visible_satellites:
                 ),
                 opacity=1.0 if is_focus else 0.48,
                 name=(
-                    f"🎯 {satellite['name']} orbit"
+                    f" {satellite['name']} orbit"
                     if is_focus
                     else f"{satellite['name']} orbit"
                 ),
@@ -885,10 +1414,9 @@ for satellite in visible_satellites:
             f"Trajectory failed for {satellite['name']}: {error}"
         )
 
-current_positions = propagate_visualization_positions(
-    visible_satellites,
-    calculation_time,
-)
+# These positions were already propagated above for the position summary.
+# Reuse them for spacecraft markers instead of running SGP4 a second time.
+current_positions = display_positions
 
 dynamic_trace_indices = []
 
@@ -969,7 +1497,7 @@ if animation_enabled and visible_satellites:
                 yanchor="bottom",
                 buttons=[
                     dict(
-                        label="▶ Play",
+                        label=" Play",
                         method="animate",
                         args=[
                             None,
@@ -987,7 +1515,7 @@ if animation_enabled and visible_satellites:
                         ],
                     ),
                     dict(
-                        label="⏸ Pause",
+                        label=" Pause",
                         method="animate",
                         args=[
                             [None],
@@ -1083,7 +1611,7 @@ st.caption(
 # CURRENT POSITION SUMMARY
 # ============================================================
 
-st.subheader("📍 Current Satellite Positions")
+st.subheader(" Current Satellite Positions")
 
 if positions:
     position_table = pd.DataFrame(
@@ -1122,7 +1650,7 @@ else:
 # ============================================================
 
 st.divider()
-st.subheader("🔎 Conjunction Risk Analysis")
+st.subheader(" Conjunction Risk Analysis")
 
 control1, control2, control3 = st.columns([1.1, 1.1, 1])
 
@@ -1152,34 +1680,80 @@ with control3:
         f"Critical < {CRITICAL_DISTANCE_KM:g} km"
     )
 
-screening_start = datetime.now(timezone.utc)
-screening_wall_start = time.perf_counter()
-
-# Reliability state: these values are always defined, even if screening
-# encounters an exception.
-screening_runtime_seconds = 0.0
-screening_error = None
-screening_results = []
-
 selected_count = len(selected_objects)
-propagated_count = len(propagation_ok_names.intersection(
-    satellite["name"] for satellite in selected_objects
-))
-
+eligible_satellites = [
+    satellite
+    for satellite in selected_objects
+    if satellite["name"] in propagation_ok_names
+]
+propagated_count = len(eligible_satellites)
 expected_pairs = propagated_count * (propagated_count - 1) // 2
 
-with st.spinner("Running pairwise conjunction screening..."):
-    try:
-        screening_results = screen_all_pairs(
-            selected_objects,
-            start_time=screening_start,
-            minutes=screening_minutes,
-            step_seconds=screening_step,
-        )
-    except Exception as error:
-        screening_error = str(error)
+screening_signature = {
+    "selected_satellites": [
+        (satellite["name"], satellite.get("line1", ""), satellite.get("line2", ""))
+        for satellite in selected_objects
+    ],
+    "eligible_satellites": [
+        (satellite["name"], satellite.get("line1", ""), satellite.get("line2", ""))
+        for satellite in eligible_satellites
+    ],
+    "minutes": screening_minutes,
+    "step_seconds": screening_step,
+}
+screening_digest = hashlib.sha256(
+    json.dumps(screening_signature, sort_keys=True).encode("utf-8")
+).hexdigest()[:12]
 
-screening_runtime_seconds = time.perf_counter() - screening_wall_start
+force_screening = st.button(
+    " Run Screening Now",
+    key="orbitguard_run_screening_now",
+)
+st.caption(
+    "The last scan is reused when the satellite TLEs and screening settings "
+    "are unchanged. Run Screening Now to calculate a fresh screening epoch."
+)
+
+cached_screening = st.session_state.get("orbitguard_screening_cache")
+cache_matches = (
+    isinstance(cached_screening, dict)
+    and cached_screening.get("signature") == screening_digest
+)
+
+if force_screening or not cache_matches:
+    screening_start = datetime.now(timezone.utc)
+    screening_wall_start = time.perf_counter()
+    screening_error = None
+    screening_results = []
+
+    with st.spinner("Running pairwise conjunction screening..."):
+        try:
+            screening_results = screen_all_pairs(
+                eligible_satellites,
+                start_time=screening_start,
+                minutes=screening_minutes,
+                step_seconds=screening_step,
+            )
+        except Exception as error:
+            screening_error = str(error)
+
+    screening_runtime_seconds = time.perf_counter() - screening_wall_start
+    screening_end = datetime.now(timezone.utc)
+
+    st.session_state["orbitguard_screening_cache"] = {
+        "signature": screening_digest,
+        "start": screening_start,
+        "end": screening_end,
+        "results": screening_results,
+        "runtime_seconds": screening_runtime_seconds,
+        "error": screening_error,
+    }
+else:
+    screening_start = cached_screening["start"]
+    screening_end = cached_screening["end"]
+    screening_results = cached_screening["results"]
+    screening_runtime_seconds = cached_screening["runtime_seconds"]
+    screening_error = cached_screening["error"]
 
 returned_pairs = len(screening_results)
 
@@ -1238,10 +1812,21 @@ if screening_results:
         key=lambda result: result["minimum_distance_km"],
     )
 
-screening_end = datetime.now(timezone.utc)
+health_records = [
+    build_satellite_health(
+        satellite,
+        satellite["name"] in propagation_ok_names,
+        calculation_time,
+    )
+    for satellite in selected_objects
+]
+
+screening_id = (
+    f"{screening_start.strftime('%Y%m%dT%H%M%S%fZ')}-{screening_digest}"
+)
 
 audit_record = {
-    "screening_id": screening_start.strftime("%Y%m%dT%H%M%S%fZ"),
+    "screening_id": screening_id,
     "screening_start_utc": screening_start.isoformat(),
     "screening_end_utc": screening_end.isoformat(),
     "screening_window_minutes": screening_minutes,
@@ -1263,26 +1848,23 @@ audit_record = {
     ),
     "tle_source_counts": source_counts,
     "tle_status_counts": (
-        pd.Series(
-            [
-                record["tle_status"]
-                for record in [
-                    build_satellite_health(
-                        satellite,
-                        satellite["name"] in propagation_ok_names,
-                        calculation_time,
-                    )
-                    for satellite in selected_objects
-                ]
-            ]
-        ).value_counts().to_dict()
-        if selected_objects
+        pd.Series([record["tle_status"] for record in health_records])
+        .value_counts()
+        .to_dict()
+        if health_records
         else {}
     ),
     "screening_error": screening_error,
 }
 
-append_screening_audit(audit_record)
+# A Streamlit widget change can rerun the whole script. Record each
+# distinct scan once instead of appending duplicate audit rows on every rerun.
+known_audit_ids = {
+    record.get("screening_id")
+    for record in load_recent_screening_audits(limit=100)
+}
+if screening_id not in known_audit_ids:
+    append_screening_audit(audit_record)
 
 # ============================================================
 # KPI ROW
@@ -1315,7 +1897,7 @@ with k3:
 with k4:
     st.metric("Search Window", f"{screening_minutes} min")
 
-st.markdown("### 🛡️ Screening Integrity")
+st.markdown("###  Screening Integrity")
 
 ri1, ri2, ri3, ri4 = st.columns(4)
 
@@ -1401,7 +1983,7 @@ if screening_results:
 # SCREENING TABLE
 # ============================================================
 
-st.subheader("📋 Pair Screening Results")
+st.subheader(" Pair Screening Results")
 
 if screening_results:
 
@@ -1493,7 +2075,7 @@ if screening_results:
 # ============================================================
 
 if screening_results:
-    st.subheader("🎯 Selected Conjunction Event")
+    st.subheader(" Selected Conjunction Event")
 
     event_labels = [
         f"{result['satellite_a']} ↔ {result['satellite_b']}"
@@ -1555,7 +2137,7 @@ if screening_results:
     # DISTANCE VS TIME
     # ========================================================
 
-    st.subheader("📈 Distance vs Time — Closest Approach")
+    st.subheader(" Distance vs Time — Closest Approach")
 
     with st.spinner("Calculating separation timeline..."):
         timeline_minutes, timeline_distance = calculate_distance_timeline(
@@ -1642,7 +2224,7 @@ if screening_results:
     # TCA DETAILS
     # ========================================================
 
-    st.subheader("⏱️ Time of Closest Approach")
+    st.subheader(" Time of Closest Approach")
 
     tca_time = selected_result["tca_time"]
     tca_col1, tca_col2, tca_col3 = st.columns(3)
@@ -1671,7 +2253,7 @@ if screening_results:
     # EXPLAINABLE RESULT
     # ========================================================
 
-    st.subheader("🧠 Explainable Screening Result")
+    st.subheader(" Explainable Screening Result")
 
     distance = selected_result["minimum_distance_km"]
     relative_velocity = selected_result["relative_velocity_km_s"]
@@ -1724,7 +2306,7 @@ if screening_results:
     # MISSION INTELLIGENCE
     # ========================================================
 
-    st.subheader("🧠 Mission Intelligence")
+    st.subheader(" Mission Intelligence")
 
     intelligence = analyze_conjunction(selected_result)
 
@@ -1803,7 +2385,7 @@ if screening_results:
     # MISSION CONTEXT
     # ========================================================
 
-    st.subheader("🇮🇳 Mission Context")
+    st.subheader(" Mission Context")
 
     mc1, mc2, mc3 = st.columns(3)
 
@@ -1839,7 +2421,7 @@ if screening_results:
 # ============================================================
 
 st.divider()
-st.subheader("🇮🇳 Indian Satellite Watchlist")
+st.subheader(" Indian Satellite Watchlist")
 
 indian_assets = [
     satellite
@@ -1908,16 +2490,7 @@ st.caption(
 # ============================================================
 
 st.divider()
-st.subheader("🩺 Data Quality & System Health")
-
-health_records = [
-    build_satellite_health(
-        satellite,
-        satellite["name"] in propagation_ok_names,
-        calculation_time,
-    )
-    for satellite in selected_objects
-]
+st.subheader(" Data Quality & System Health")
 
 health_df = pd.DataFrame(
     [
@@ -2113,7 +2686,7 @@ st.caption(
 # ============================================================
 
 st.divider()
-st.subheader("📡 TLE Source Provenance")
+st.subheader(" TLE Source Provenance")
 
 source_table = pd.DataFrame(
     [
@@ -2157,7 +2730,7 @@ st.caption(
 # ============================================================
 
 st.divider()
-st.subheader("🧾 Screening Audit Trail")
+st.subheader(" Screening Audit Trail")
 
 st.caption(
     "Each completed dashboard run appends a compact JSON Lines audit record "
@@ -2209,7 +2782,7 @@ else:
 # ============================================================
 
 st.divider()
-st.subheader("🛰️ Satellite Catalog")
+st.subheader(" Satellite Catalog")
 
 catalog_table = pd.DataFrame(
     [
@@ -2233,13 +2806,15 @@ st.dataframe(
 # FOOTER
 # ============================================================
 
+st.caption("Decorative background footage: user-provided monochrome galaxy video. The footage is visual ambience only; OrbitGuard telemetry is calculated independently from TLE and SGP4 data.")
+
 st.divider()
 
 footer1, footer2 = st.columns(2)
 
 with footer1:
     st.caption(
-        "🛰️ OrbitGuard AI — Explainable Collision-Risk Intelligence for Satellites"
+        " OrbitGuard AI — Explainable Collision-Risk Intelligence for Satellites"
     )
 
 with footer2:

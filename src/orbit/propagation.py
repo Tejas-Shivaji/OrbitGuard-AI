@@ -1,5 +1,6 @@
 from sgp4.api import Satrec
 from datetime import datetime, timezone
+from functools import lru_cache
 
 
 def datetime_to_julian_date(dt):
@@ -13,6 +14,12 @@ def datetime_to_julian_date(dt):
     return 2440587.5 + unix_time / 86400.0
 
 
+@lru_cache(maxsize=512)
+def _satrec_from_tle(line1, line2):
+    """Parse each unique TLE once and reuse its SGP4 record."""
+    return Satrec.twoline2rv(line1, line2)
+
+
 def get_satellite_position(
     name,
     line1,
@@ -21,10 +28,14 @@ def get_satellite_position(
 ):
     """Calculate satellite position and velocity using SGP4."""
 
-    satellite = Satrec.twoline2rv(line1, line2)
+    satellite = _satrec_from_tle(line1, line2)
 
     if calculation_time is None:
         calculation_time = datetime.now(timezone.utc)
+    elif calculation_time.tzinfo is None:
+        calculation_time = calculation_time.replace(tzinfo=timezone.utc)
+    else:
+        calculation_time = calculation_time.astimezone(timezone.utc)
 
     julian_date = datetime_to_julian_date(calculation_time)
 
